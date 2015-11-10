@@ -1,6 +1,6 @@
 {
   "name": "hiseq",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Sequence manipulation and querying library",
   "main": "index.js",
   "repository": "rvikmanis/hiseq",

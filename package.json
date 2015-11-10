@@ -1,6 +1,6 @@
 {
   "name": "hiseq",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Sweet API for sequences and iteration",
   "main": "index.js",
   "scripts": {

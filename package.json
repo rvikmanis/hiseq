@@ -1,0 +1,19 @@
+{
+  "name": "hiseq",
+  "version": "0.0.1",
+  "description": "Sweet API for sequences and iteration",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rm -f npm-debug.log && babel index.src.js -o index.js",
+    "clean": "rm -f index.js npm-debug.log",
+    "prepublish": "npm run build",
+    "postpublish": "npm run clean"
+  },
+  "author": "Rudolfs Vikmanis <rudolfs.vikmanis@gmail.com> (https://github.com/rvikmanis)",
+  "license": "MIT",
+  "devDependencies": {
+    "babel-cli": "~6.1.2",
+    "babel-preset-es2015": "~6.1.2"
+  }
+}

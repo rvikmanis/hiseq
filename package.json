@@ -1,8 +1,9 @@
 {
   "name": "hiseq",
   "version": "0.0.2",
-  "description": "Sweet API for sequences and iteration",
+  "description": "Sequence manipulation and querying library",
   "main": "index.js",
+  "repository": "rvikmanis/hiseq",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "rm -f npm-debug.log && babel index.src.js -o index.js",

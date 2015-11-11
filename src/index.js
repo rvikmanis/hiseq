@@ -212,9 +212,10 @@ class Sequence {
           throw new Error("Sequence.prototype.constructor(iter, keys, ...): " +
             "args `iter` and `keys` must be of equal size");
         }
+        keys = keys.concat()
       }
 
-      this.values = iter;
+      this.values = iter.concat();
       this.keys = keys;
     }
 
@@ -244,11 +245,19 @@ class Sequence {
     return new this.constructor(res[1], res[0]);
   }
 
-  addTransformation(t, arg) {
+  withTransformation(t, arg) {
     return new this.constructor(
       this.values,
       this.keys,
       this.transformations.concat([[t, arg]])
+    )
+  }
+
+  withTransformations(...trs) {
+    return new this.constructor(
+      this.values,
+      this.keys,
+      this.transformations.concat(trs)
     )
   }
 
@@ -257,9 +266,9 @@ class Sequence {
     {
       let r = transform(this.keys, this.values, this.transformations);
       if (commit) {
-        this.keys = r[0];
-        this.values = r[1];
-        this.transformations = [];
+        this.keys = Object.freeze(r[0]);
+        this.values = Object.freeze(r[1]);
+        this.transformations = Object.freeze([]);
       }
       return r;
     }
@@ -301,18 +310,18 @@ class Sequence {
     ))
   }
 
-  any(fn = (x) => x) {
+  any(fn=identity) {
     let s = false;
     this.each((v, k) => {
       if (fn(v, k)) {
         s = true;
-        return EOF;
+        return false;
       }
     }, true);
     return s;
   }
 
-  all(fn = (x) => x) {
+  all(fn=identity) {
     return !this.any((v, k) => !fn(v, k));
   }
 
@@ -321,11 +330,15 @@ class Sequence {
     return res[1].indexOf(q) !== -1;
   }
 
+  containsKey(q) {
+    return this.flip().contains(q);
+  }
+
   merge(...iterables) {
     let res;
-    let next = this.clone();
-    let ks = next.keys;
-    let vs = next.values;
+    let tr = this.transform(true);
+    let ks = tr[0];
+    let vs = tr[1];
     let i, ii, len = iterables.length;
     let kslen;
 
@@ -355,7 +368,7 @@ class Sequence {
       f = (v, k) => fn(v[field], k)
     }
     else if (isArray(field)) {
-      f = (v, k) => {
+      f = v => {
         if (fn === identity) {
           fn = (...v) => v
         }
@@ -365,23 +378,23 @@ class Sequence {
     }
     else throw new Error("map: invalid argument");
 
-    return this.addTransformation(T_MAP, f);
-  }
-
-  flip() {
-    return this.addTransformation(T_FLIP);
+    return this.withTransformation(T_MAP, f);
   }
 
   mapKeys(...a) {
     return this.flip().map(...a).flip();
   }
 
+  flip() {
+    return this.withTransformation(T_FLIP);
+  }
+
   pack() {
-    return this.addTransformation(T_PACK);
+    return this.withTransformation(T_PACK);
   }
 
   unpack() {
-    return this.addTransformation(T_UNPACK);
+    return this.withTransformation(T_UNPACK);
   }
 
   filter(field=identity, fn=identity) {
@@ -394,7 +407,7 @@ class Sequence {
       f = (v, k) => fn(v[field], k)
     }
     else if (isArray(field)) {
-      f = (v, k) => {
+      f = v => {
         if (fn === identity) {
           fn = (...v) => new Sequence(v).all()
         }
@@ -404,7 +417,57 @@ class Sequence {
     }
     else throw new Error("filter: invalid argument");
 
-    return this.addTransformation(T_FILTER, f)
+    return this.withTransformation(T_FILTER, f)
+  }
+
+  filterKeys(...a) {
+    return this.flip().filter(...a).flip();
+  }
+
+  get(k) {
+    let res = this.transform(true);
+    let ik = res[0].indexOf(k);
+    return ik !== -1 ? res[1][ik] : void 0;
+  }
+
+  first() {
+    let res = this.transform(true);
+    return res[1][0];
+  }
+
+  groupBy(field, groupMapper) {
+    let f, fn, grouped, res;
+
+    if (isFunction(field)) {
+      f = field
+    }
+
+    else if (isString(field)||isNumber(field)) {
+      f = v => v[field]
+    }
+
+    else {
+      throw new Error("groupBy: invalid argument");
+    }
+
+    grouped = new Sequence(this.mapKeys((k, v) => f(v, k)).reduce(
+      (a, v, k) => {
+        a[k] = (a[k]||[]).concat([v]);
+        return a
+      }, {}));
+
+    if (isFunction(groupMapper)) {
+      grouped = grouped.map((g, k) => {
+        g = groupMapper(new Sequence(g), k);
+        if (g && g.constructor === Sequence) {
+          g = g.array();
+        }
+        return g;
+      })
+    }
+
+    return grouped
+
   }
 }
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+source .tasks/common.env
+
+rm -f npm-debug.log
+rm -f $CLEAN

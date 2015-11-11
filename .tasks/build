@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+source .tasks/common.env
+
+babel $SOURCE -d $TARGET

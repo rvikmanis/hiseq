@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+source .tasks/common.env
+
+watchy -w _plugin_dev/main.js,src/babel-plugin.js -- bash -c \
+  "babel src/babel-plugin.js -o ./babel-plugin.js && \
+   babel --plugins ./babel-plugin \
+      _plugin_dev/plugin_dev.js > _plugin_dev/last.log"

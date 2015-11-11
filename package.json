@@ -2,19 +2,22 @@
   "name": "hiseq",
   "version": "0.0.3",
   "description": "Sequence manipulation and querying library",
-  "main": "index.js",
+  "main": "lib/index.js",
   "repository": "rvikmanis/hiseq",
   "scripts": {
+    "env": "env",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "rm -f npm-debug.log && babel index.src.js -o index.js",
-    "clean": "rm -f index.js npm-debug.log",
+    "build": ".tasks/build",
+    "clean": ".tasks/clean",
     "prepublish": "npm run build",
-    "postpublish": "npm run clean"
+    "postpublish": "npm run clean",
+    "plugin_dev": ".tasks/plugin_dev"
   },
   "author": "Rudolfs Vikmanis <rudolfs.vikmanis@gmail.com> (https://github.com/rvikmanis)",
   "license": "MIT",
   "devDependencies": {
     "babel-cli": "~6.1.2",
-    "babel-preset-es2015": "~6.1.2"
+    "babel-preset-es2015": "~6.1.2",
+    "watchy": "^0.6.5"
   }
 }

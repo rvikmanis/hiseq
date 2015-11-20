@@ -1,25 +1,5 @@
 export default function plugin({template, types: t}) {
 
-
-  const array2arrayTpl = template(`
-    (function(ARRAY) {
-      var I = 0,
-          R = 0,
-          LEN = ARRAY.length,
-          TMP, KEY, VALUE,
-          RESULT = [],
-          SKIP = false;
-      for(;I<LEN;I++) {
-        SKIP = false;
-        VALUE = ARRAY[I];
-        KEY = I;
-        STEPS;
-        if(!SKIP) RESULT[R++] = VALUE;
-      }
-      return RESULT;
-    })(SOURCE);
-    `);
-
   const FINALIZERS = [
     'array',
     'object',

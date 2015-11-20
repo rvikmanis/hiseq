@@ -1,34 +1,7 @@
 export default function plugin({template, types: t}) {
 
-  const FINALIZERS = [
-    'array',
-    'object',
-    'reduce'
-  ];
 
-  const STEPS = [
-    'map', 'filter', 'mapKeys',
-    'filterKeys', 'flip'
-  ];
-
-  const buildMapStep = template(`
-    $value = $mapper($value, $key);
-    `);
-
-  const buildFlipStep = template(`
-    $tmp = $value;
-    $value = $key;
-    $key = $tmp;
-    $tmp = null;
-    `);
-
-  const buildFilterStep = template(`
-    if(!$predicate($value, $key)) {
-      $skip = true;
-    }
-    `);
-
-  const tpl_Arr2Arr = template(`
+  const array2arrayTpl = template(`
     (function(ARRAY) {
       var I = 0,
           R = 0,
@@ -47,94 +20,289 @@ export default function plugin({template, types: t}) {
     })(SOURCE);
     `);
 
+  const FINALIZERS = [
+    'array',
+    'object',
+    'reduce',
+    'groupBy'
+  ];
+
+  const STEPS = [
+    'map', 'filter', 'mapKeys',
+    'filterKeys', 'flip'
+  ];
+
+  const mapTpl = template(`
+    value = mapper(value, key);
+    `);
+
+  const flipTpl = template(`
+    tmp = (tmp = value,
+    value = key,
+    key = tmp,
+    null);
+    `);
+
+  const filterTpl = template(`
+    if(!predicate(value, key)) {
+      skip = true;
+    }
+    `);
+
+  const loopInvocationTpl = template(`
+    loop(source)
+    `);
+
+  const commonLoopTpl = template(`
+    function loop(source) {
+      var i, j,
+          len, tmp,
+          key, value,
+          sourceKeys,
+          target,
+          skip;
+
+      i = 0;
+      if (source.constructor === Object) {
+        sourceKeys = Object.keys(source);
+        len = sourceKeys.length;
+      }
+      else if (source.constructor === Array) {
+        len = source.length;
+      }
+      else throw new Error("Unsupported type of: " + source);
+
+      INIT_TARGET;
+
+      for(;i<len;i++) {
+        skip = false;
+        key = sourceKeys == null ? i : sourceKeys[i];
+        value = source[key];
+
+        EACH_RUN_STEPS;
+
+        if(!skip) {
+          EACH_UPDATE_TARGET;
+        }
+      }
+
+      RETURN_TARGET;
+    }
+    `);
+
+  const initArrayTargetTpl = template(`
+    j = 0;
+    target = [];
+    `);
+
+  const initObjectTargetTpl = template(`
+    target = {};
+    `);
+
+  const initReduceWithInitialAccumulatorTargetTpl = template(`
+    target = initialAccumulator;
+    `);
+
+  const initReduceTargetTpl = template(`
+    target = void 0;
+    `);
+
+  const eachUpdateArrayTargetTpl = template(`
+    target[j++] = value;
+    `);
+
+  const eachUpdateObjectTargetTpl = template(`
+    target[key] = value;
+    `);
+
+  const eachUpdateReduceTargetTpl = template(`
+    target = (target === (void 0) && i === 0) ?
+      value : reducer(target, value, key);
+    `)
+
+  const returnTargetTpl = template(`
+    return target;
+    `);
+
+  const groupByReducerTpl = template(`
+    (function(a, x, k) {
+      var group = findKey(x, k);
+      a[group] = a[group] === (void 0) ?
+        [x] : a[group].concat([x]);
+      return a;
+    })
+    `)
+
   class Transformer {
     constructor(path, sequenceDescriptor) {
       this.path      = path;
       this.statement = path.getStatementParent();
-      this.scope     = path.scope;
+      this.scope     = this.statement.scope;
 
       this.source    = sequenceDescriptor.initial;
       this.steps     = sequenceDescriptor.sequenceCalls;
       this.finalizer = sequenceDescriptor.finalizingCall;
 
-      this.loopIdentifiers = this.generateIdentifiers([
+      this.loopRefs = this.refs([
         'i', 'j', 'len',
         'source', 'sourceKeys',
-        'target', 'targetKeys',
+        'target',
         'tmp', 'skip',
         'key', 'value'
-      ]);
+      ], name => name);
     }
 
-    generateIdentifier(name = 'ref') {
+    ref(name = 'hs_ref') {
       return this.scope.generateUidIdentifier(name);
     }
 
-    generateDeclaredIdentifier(name = 'ref') {
-      return this.scope.generateDeclaredUidIdentifier(name);
-    }
-
-    generateIdentifiers(names, fn = () => {}) {
+    refs(names, fn = () => {}) {
       let identifiers = {};
       names.forEach(name => {
-        identifiers[name] = this.generateIdentifier(fn(name));
+        identifiers[name] = this.ref(fn(name));
       });
       return identifiers
     }
 
-    run() {
-      let {source, steps, finalizer, loopIdentifiers} = this;
+    insert(nodes) {
+      return this.statement.insertBefore(nodes)
+    }
 
-      steps = steps.map(({name, args: [param]}) => {
+    declare(...pairs) {
+      if (pairs.length === 2 && t.isIdentifier(pairs[0])) {
+        pairs = [pairs];
+      }
+      let declarators = pairs
+        .filter(([_, v]) => v != null)
+        .map(([k, v]) => t.variableDeclarator(k, v));
+      let declaration = t.variableDeclaration('var', declarators);
+      this.insert(declaration);
+      return declaration;
+    }
+
+    buildMapStep(mapper, flip=false) {
+      let value = this.loopRefs[!flip ? "value" : "key"];
+      let key = this.loopRefs[!flip ? "key" : "value"];
+      return mapTpl({key, value, mapper});
+    }
+
+    buildFilterStep(predicate, flip=false) {
+      let value = this.loopRefs[!flip ? "value" : "key"];
+      let key = this.loopRefs[!flip ? "key" : "value"];
+      return filterTpl({key, value, predicate});
+    }
+
+    buildFlipStep() {
+      let {key, value, tmp} = this.loopRefs;
+      return flipTpl({key, value, tmp});
+    }
+
+    buildLoop(loop, steps) {
+      let {target, i, source, sourceKeys, j, key, value} = this.loopRefs;
+      let init, eachUpdate;
+      let loopReturn = returnTargetTpl({target});
+
+      if (this.finalizer.name === "array") {
+        init = initArrayTargetTpl({target, j});
+        eachUpdate = eachUpdateArrayTargetTpl({target, j, value});
+      }
+
+      else if (this.finalizer.name === "object") {
+        init = initObjectTargetTpl({target});
+        eachUpdate = eachUpdateObjectTargetTpl({target, key, value});
+      }
+
+      else if (this.finalizer.name === "reduce") {
+        let [fn, initialAccumulatorValue] = this.finalizer.args;
+
+        let reducer = this.ref();
+        let initialAccumulator = this.ref();
+
+        this.declare(
+          [reducer, fn],
+          [initialAccumulator, initialAccumulatorValue]
+        );
+
+        eachUpdate = eachUpdateReduceTargetTpl({
+          target, reducer, value, key, i
+        });
+
+        if (initialAccumulatorValue === void 0) {
+          init = initReduceTargetTpl({
+            target
+          })
+        }
+
+        else {
+          init = initReduceWithInitialAccumulatorTargetTpl({
+            target, initialAccumulator
+          });
+        }
+      }
+
+      return commonLoopTpl({
+        RETURN_TARGET: loopReturn,
+        INIT_TARGET: init,
+        EACH_UPDATE_TARGET: eachUpdate,
+        EACH_RUN_STEPS: steps,
+        loop,
+        ...this.loopRefs
+      })
+
+    }
+
+    buildLoopInvocation(loop) {
+      return loopInvocationTpl({loop, source: this.source});
+    }
+
+    setFinalizer(name, ...args) {
+      this.finalizer.name = name;
+      this.finalizer.args = args;
+    }
+
+    pre() {
+      if (this.finalizer.name === "groupBy") {
+        let [param] = this.finalizer.args;
+        let findKey = this.ref();
+        this.declare(findKey, param);
+        this.setFinalizer(
+          'reduce',
+          groupByReducerTpl({findKey}).expression,
+          t.objectExpression([])
+        )
+        return this.pre();
+      }
+    }
+
+    run() {
+
+      this.pre();
+
+      let steps = this.steps.map(({name, args: [param]}) => {
 
         if (['map', 'mapKeys'].indexOf(name) !== -1) {
-          let value = loopIdentifiers[name === 'map' ? "value" : "key"];
-          let key = loopIdentifiers[name === 'map' ? "key" : "value"];
-          let mapper = this.generateDeclaredIdentifier();
-
-          this.insertPre(t.variableDeclaration('var', [
-            t.variableDeclarator(mapper, param)
-          ]));
-
-          return buildMapStep({key, value, mapper});
+          let mapper = this.ref();
+          this.declare(mapper, param);
+          return this.buildMapStep(mapper, name === "mapKeys");
         }
 
         else if (['filter', 'filterKeys'].indexOf(name) !== -1) {
-          let value = loopIdentifiers[name === 'filter' ? "value" : "key"];
-          let key = loopIdentifiers[name === 'filter' ? "key" : "value"];
-          let predicate = this.generateDeclaredIdentifier();
-
-          this.insertPre(t.variableDeclaration('var', [
-            t.variableDeclarator(predicate, param)
-          ]));
-
-          return buildFilterStep({key, value, predicate});
+          let predicate = this.ref();
+          this.declare(predicate, param);
+          return this.buildFilterStep(predicate, name === "filterKeys");
         }
 
         else if (name === 'flip') {
-          let {key, value, tmp} = loopIdentifiers;
-          return buildFlipStep({key, value, tmp});
+          return this.buildFlipStep();
         }
 
         else { throw new Error(`Invalid step: ${name}`); }
 
       });
 
-      this.path.replaceWith(tpl_Arr2Arr({
-        // identifiers
-        I: i,
-        R: r,
-        LEN: len,
-        ARRAY: array,
-        TMP: tmp,
-        KEY: key,
-        VALUE: value,
-        RESULT: result,
-        SKIP: skip,
-        // actual values
-        SOURCE: source,
-        STEPS: steps
-      }))
+      let loop = this.ref();
+      this.insert(this.buildLoop(loop, steps));
+      this.path.replaceWith(this.buildLoopInvocation(loop))
     }
   }
 
@@ -238,13 +406,8 @@ export default function plugin({template, types: t}) {
 
   return {
     visitor: {
-      //Program: visitProgram,
-      //CallExpression: visitCallExpression,
-      Program(a, b, c) {
-
-        console.dir(b.file.ast, {depth: 5});
-
-      }
+      Program: visitProgram,
+      CallExpression: visitCallExpression
     }
   }
 

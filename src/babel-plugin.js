@@ -1,35 +1,19 @@
 export default function plugin({template, types: t}) {
 
-
-  const array2arrayTpl = template(`
-    (function(ARRAY) {
-      var I = 0,
-          R = 0,
-          LEN = ARRAY.length,
-          TMP, KEY, VALUE,
-          RESULT = [],
-          SKIP = false;
-      for(;I<LEN;I++) {
-        SKIP = false;
-        VALUE = ARRAY[I];
-        KEY = I;
-        STEPS;
-        if(!SKIP) RESULT[R++] = VALUE;
-      }
-      return RESULT;
-    })(SOURCE);
-    `);
-
   const FINALIZERS = [
-    'array',
-    'object',
+    'toArray',
+    'toObject',
     'reduce',
-    'groupBy'
+    'each',
+    'groupBy',
+    'indexBy',
+    'countBy'
   ];
 
   const STEPS = [
     'map', 'filter', 'mapKeys',
-    'filterKeys', 'flip'
+    'filterKeys', 'flip', 'items',
+    'expandItems', 'mapItems'
   ];
 
   const mapTpl = template(`
@@ -47,6 +31,19 @@ export default function plugin({template, types: t}) {
     if(!predicate(value, key)) {
       skip = true;
     }
+    `);
+
+  const itemsTpl = template(`
+    value = [key, value];
+    `);
+
+  const expandItemsTpl = template(`
+    value = (key = value[0], value[1]);
+    `);
+
+  const mapItemsTpl = template(`
+    value = mapper([key, value]);
+    value = (key = value[0], value[1]);
     `);
 
   const loopInvocationTpl = template(`
@@ -120,6 +117,10 @@ export default function plugin({template, types: t}) {
       value : reducer(target, value, key);
     `)
 
+  const eachUpdateEachTargetTpl = template(`
+    if(iteratee(value, key) === false) { return };
+    `);
+
   const returnTargetTpl = template(`
     return target;
     `);
@@ -127,11 +128,31 @@ export default function plugin({template, types: t}) {
   const groupByReducerTpl = template(`
     (function(a, x, k) {
       var group = findKey(x, k);
+      if (group == null) return a;
       a[group] = a[group] === (void 0) ?
         [x] : a[group].concat([x]);
       return a;
     })
-    `)
+    `);
+
+  const indexByReducerTpl = template(`
+    (function(a, x, k) {
+      var idx = findKey(x, k);
+      if (idx == null) return a;
+      a[idx] = x;
+      return a;
+    })
+    `);
+
+  const countByReducerTpl = template(`
+    (function(a, x, k) {
+      var idx = findKey(x, k);
+      if (idx == null) return a;
+      a[idx] = a[idx] === (void 0) ?
+        1 : a[idx] + 1;
+      return a;
+    })
+    `);
 
   class Transformer {
     constructor(path, sequenceDescriptor) {
@@ -189,7 +210,8 @@ export default function plugin({template, types: t}) {
     buildFilterStep(predicate, flip=false) {
       let value = this.loopRefs[!flip ? "value" : "key"];
       let key = this.loopRefs[!flip ? "key" : "value"];
-      return filterTpl({key, value, predicate});
+      let skip = this.loopRefs["skip"];
+      return filterTpl({key, value, predicate, skip});
     }
 
     buildFlipStep() {
@@ -197,19 +219,47 @@ export default function plugin({template, types: t}) {
       return flipTpl({key, value, tmp});
     }
 
+    buildItemsStep() {
+      let {key, value} = this.loopRefs;
+      return itemsTpl({key, value});
+    }
+
+    buildExpandItemsStep() {
+      let {key, value} = this.loopRefs;
+      return itemsTpl({key, value});
+    }
+
+    buildMapItemsStep(mapper) {
+      let {key, value} = this.loopRefs;
+      return mapItemsTpl({key, value, mapper});
+    }
+
     buildLoop(loop, steps) {
       let {target, i, source, sourceKeys, j, key, value} = this.loopRefs;
       let init, eachUpdate;
       let loopReturn = returnTargetTpl({target});
 
-      if (this.finalizer.name === "array") {
+      if (this.finalizer.name === "toArray") {
         init = initArrayTargetTpl({target, j});
         eachUpdate = eachUpdateArrayTargetTpl({target, j, value});
       }
 
-      else if (this.finalizer.name === "object") {
+      else if (this.finalizer.name === "toObject") {
         init = initObjectTargetTpl({target});
         eachUpdate = eachUpdateObjectTargetTpl({target, key, value});
+      }
+
+      else if (this.finalizer.name === "each") {
+        let [fn] = this.finalizer.args;
+        let iteratee = this.ref();
+
+        this.declare(iteratee, fn);
+
+        // void
+        init = initReduceTargetTpl({target});
+        eachUpdate = eachUpdateEachTargetTpl({
+          iteratee, value, key
+        });
       }
 
       else if (this.finalizer.name === "reduce") {
@@ -272,6 +322,30 @@ export default function plugin({template, types: t}) {
         )
         return this.pre();
       }
+
+      else if (this.finalizer.name === "indexBy") {
+        let [param] = this.finalizer.args;
+        let findKey = this.ref();
+        this.declare(findKey, param);
+        this.setFinalizer(
+          'reduce',
+          indexByReducerTpl({findKey}).expression,
+          t.objectExpression([])
+        )
+        return this.pre();
+      }
+
+      else if (this.finalizer.name === "countBy") {
+        let [param] = this.finalizer.args;
+        let findKey = this.ref();
+        this.declare(findKey, param);
+        this.setFinalizer(
+          'reduce',
+          countByReducerTpl({findKey}).expression,
+          t.objectExpression([])
+        )
+        return this.pre();
+      }
     }
 
     run() {
@@ -294,6 +368,20 @@ export default function plugin({template, types: t}) {
 
         else if (name === 'flip') {
           return this.buildFlipStep();
+        }
+
+        else if (name === "items") {
+          return this.buildItemsStep();
+        }
+
+        else if (name === "expandItems") {
+          return this.buildExpandItemsStep();
+        }
+
+        else if (name === "mapItems") {
+          let mapper = this.ref();
+          this.declare(mapper, param);
+          return this.buildMapItemsStep(mapper);
         }
 
         else { throw new Error(`Invalid step: ${name}`); }
